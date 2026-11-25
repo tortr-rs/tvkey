@@ -1,0 +1,43 @@
+#!/bin/sh
+# tvpanel: what the ThinkVantage button opens. the ThinkPad's vitals, ThinkLight and wallpaper on a key
+[ -z "$TVPANEL" ] && exec env TVPANEL=1 st -c tvpanel -t ThinkVantage -g 92x36+60+40 -e "$0"
+
+b=/sys/class/power_supply/BAT0
+light=/sys/class/leds/tpacpi::thinklight/brightness
+get() { cat "$1" 2>/dev/null; }
+
+show() {
+	clear
+	fastfetch
+	full=$(get $b/energy_full || get $b/charge_full)
+	design=$(get $b/energy_full_design || get $b/charge_full_design)
+	printf '\n  \033[1;31mThinkVantage\033[0m\n\n'
+	if [ -d $b ]; then
+		printf '  battery    %s%%, %s' "$(get $b/capacity)" "$(get $b/status | tr A-Z a-z)"
+		[ -n "$full" ] && [ -n "$design" ] && [ "$design" -gt 0 ] && printf ', holds %s%% of new' $((full * 100 / design))
+		printf ', %s cycles\n' "$(get $b/cycle_count)"
+	else
+		echo '  battery    none in, on the cable'
+	fi
+	for h in /sys/class/hwmon/hwmon*; do
+		[ "$(get $h/name)" = coretemp ] && printf '  cpu        %s°C\n' $(( $(get $h/temp2_input || get $h/temp1_input) / 1000 ))
+	done
+	printf '  fan        %s rpm\n' "$(awk '/^speed/{print $2}' /proc/acpi/ibm/fan 2>/dev/null)"
+	w=$(nmcli -t -f active,ssid,signal dev wifi 2>/dev/null | grep '^yes' | head -1)
+	[ -n "$w" ] && printf '  wifi       %s, %s%%\n' "$(echo "$w" | cut -d: -f2)" "$(echo "$w" | cut -d: -f3)"
+	printf '  address    %s\n' "$(ip -4 -o addr | awk '$2 != "lo" {print $4}' | tr '\n' ' ')"
+	printf '  thinklight %s\n' "$([ "$(get $light)" = 0 ] && echo off || echo on)"
+	printf '\n  \033[2ml thinklight   w wallpaper   r refresh   q close\033[0m\n'
+}
+
+stty -icanon -echo
+trap 'stty icanon echo' EXIT
+show
+while k=$(dd bs=1 count=1 2>/dev/null); do
+	case $k in
+		l) [ "$(get $light)" = 0 ] && echo 1 > $light || echo 0 > $light; show ;;
+		w) wall next; show ;;
+		r) show ;;
+		q|'') exit ;;
+	esac
+done
